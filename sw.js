@@ -3,7 +3,7 @@ const CACHE_NAME = 'marupos-cache-v1';
 // Pastikan nama file HTML kamu sesuai ('./maru.html' atau './index.html')
 const ASSETS_TO_CACHE = [
   './',
-  './maru.html',
+  './index.html',
   './manifest.json',
   'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap',
   'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js',
