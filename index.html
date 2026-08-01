@@ -11,6 +11,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
 <style>
   :root{
@@ -242,7 +243,7 @@
   .modal-body{padding:16px;}
   .modal-foot{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;}
 
-  .receipt-preview{font-family:var(--font-mono);font-size:12px;line-height:1.5;background:#fff;padding:12px;border:1px solid var(--border);}
+  .receipt-preview{font-family:var(--font-mono);font-size:12px;line-height:1.5;background:#fff;padding:12px;border:1px solid var(--border);max-width:300px;margin:0 auto;box-sizing:border-box;}
   .receipt-preview .center{text-align:center;}
   .receipt-preview hr{border:none;border-top:1px dashed #444;margin:6px 0;}
   .receipt-preview .row{display:flex;justify-content:space-between;}
@@ -276,6 +277,36 @@
 
   ::-webkit-scrollbar{width:6px;height:6px;}
   ::-webkit-scrollbar-thumb{background:var(--border);border-radius:6px;}
+
+  /* IndexedDB Stats Widget Style */
+  .db-stat-box {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 10px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+  }
+  .db-stat-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .db-progress-bar {
+    height: 6px;
+    width: 100%;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+  .db-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.3s;
+  }
 </style>
 </head>
 <body>
@@ -302,14 +333,14 @@
       <div class="kasir-grid">
         <div class="scan-col">
           <div class="card scanner-card">
-            <h2 class="section-title" style="margin-bottom:8px;">Pindai QR / Barcode</h2>
+            <h2 class="section-title" style="margin-bottom:8px;">Pindai QR</h2>
             <video id="video" playsinline muted></video>
             <canvas id="scanCanvas" style="display:none;"></canvas>
             <div class="scan-actions">
               <button class="btn primary" id="startCamBtn">📷 Mulai Kamera</button>
               <button class="btn ghost" id="stopCamBtn" style="display:none;">Hentikan Kamera</button>
               <label class="btn ghost" style="cursor:pointer;">
-                🖼️ Unggah Gambar
+                Unggah Gambar
                 <input type="file" id="uploadQR" accept="image/*" style="display:none;">
               </label>
             </div>
@@ -405,7 +436,7 @@
               <input type="text" id="pName" required placeholder="cth. Kopi Susu">
             </div>
             <div class="field">
-              <label for="pSku">Kode SKU / Barcode</label>
+              <label for="pSku">Kode SKU / QR Code</label>
               <input type="text" id="pSku" placeholder="Kosongkan untuk otomatis" class="mono">
             </div>
             <div class="field">
@@ -503,12 +534,25 @@
             </div>
             <button type="submit" class="btn primary">Simpan Pengaturan</button>
           </form>
+
+          <hr style="border:none;border-top:1px dashed var(--border);margin:16px 0;">
+          <h2 class="section-title" style="font-size:15px;">Statistik Storage IndexedDB</h2>
+          <div class="db-stat-box" id="dbStatContainer">
+            <div class="db-stat-row"><span>Status Engine:</span><span style="color:var(--success);font-weight:bold;">IndexedDB Active</span></div>
+            <div class="db-stat-row"><span>Total Produk:</span><span id="idbProdCount">0 items</span></div>
+            <div class="db-stat-row"><span>Total Transaksi:</span><span id="idbTrxCount">0 items</span></div>
+            <div class="db-stat-row"><span>Penggunaan Disk:</span><span id="idbUsage">0 KB</span></div>
+            <div class="db-stat-row"><span>Kapasitas Quota:</span><span id="idbQuota">0 MB</span></div>
+            <div class="db-progress-bar">
+              <div class="db-progress-fill" id="idbProgress"></div>
+            </div>
+          </div>
         </div>
 
         <div class="card">
           <h2 class="section-title">Ekspor & Impor Data (Excel)</h2>
           <p class="muted" style="font-size:12.5px;margin-bottom:12px;">
-            Simpan atau cadangkan seluruh data Anda (Produk, Riwayat Transaksi, Hutang, & Statistik) ke file Excel, atau unggah kembali untuk sinkronisasi ulang secara aman.
+            Simpan atau cadangkan seluruh data Anda (Produk, Riwayat Transaksi, Hutang, & Grafik) ke file Excel, atau unggah kembali untuk sinkronisasi ulang secara aman.
           </p>
           <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <button class="btn success" id="exportExcelBtn">📊 Ekspor Data Ke Excel (.xlsx)</button>
@@ -541,6 +585,7 @@
     </div>
     <div class="modal-foot">
       <button class="btn primary" id="printReceiptBtn" style="flex:1;">🖨️ Cetak Struk (Thermal)</button>
+      <button class="btn accent" id="downloadReceiptImgBtn" style="flex:1;"> Download Gambar</button>
       <button class="btn ghost" id="closeReceiptModal2">Tutup</button>
     </div>
   </div>
@@ -581,7 +626,7 @@
       <h3>QR Kode Produk</h3>
       <button class="modal-close" id="closeQrModal">&times;</button>
     </div>
-    <div class="modal-body" style="text-align:center;">
+    <div class="modal-body" id="qrModalBody" style="text-align:center; background:#fff; padding:16px; border-radius:8px;">
       <img id="qrModalImg" style="width:180px;height:180px;border:1px solid var(--border);border-radius:8px;padding:8px;object-fit:contain;">
       <p class="mono" id="qrModalCode" style="margin-top:8px;font-size:13px;"></p>
       <p style="font-weight:700;" id="qrModalName"></p>
@@ -589,6 +634,7 @@
     <div class="modal-foot">
       <button class="btn primary" id="printSingleQrThermalBtn" style="flex:1;">🖨️ Thermal (58mm)</button>
       <button class="btn accent" id="printSingleQrA4Btn" style="flex:1;">📄 Kertas A4</button>
+      <button class="btn success" id="downloadSingleQrImgBtn" style="flex:1;">Download Gambar</button>
       <button class="btn ghost" id="closeQrModal2" style="width:100%;">Tutup</button>
     </div>
   </div>
@@ -619,6 +665,74 @@
 
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script>
+/* ===================== INDEXEDDB ENGINE ===================== */
+const DB_NAME = 'marupos_db';
+const DB_VERSION = 1;
+let db = null;
+
+function initDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = (e) => reject('Database Error: ' + e.target.errorCode);
+    request.onsuccess = (e) => {
+      db = e.target.result;
+      resolve(db);
+    };
+    request.onupgradeneeded = (e) => {
+      const dbRef = e.target.result;
+      if (!dbRef.objectStoreNames.contains('products')) {
+        dbRef.createObjectStore('products', { keyPath: 'id' });
+      }
+      if (!dbRef.objectStoreNames.contains('transactions')) {
+        dbRef.createObjectStore('transactions', { keyPath: 'id' });
+      }
+      if (!dbRef.objectStoreNames.contains('settings')) {
+        dbRef.createObjectStore('settings', { keyPath: 'key' });
+      }
+    };
+  });
+}
+
+function dbGetAll(storeName) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function dbPut(storeName, data) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    const req = store.put(data);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function dbBulkPut(storeName, items) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    items.forEach(item => store.put(item));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function dbDelete(storeName, key) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    const req = store.delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
 /* ===================== STATE & PERSISTENT STORAGE ===================== */
 const QR_PREFIX = 'MARUPOS:';
 let state = {
@@ -637,18 +751,28 @@ let state = {
 
 let chartInstance = null;
 
-// Menggunakan localStorage secara konsisten & aman
-function loadAll(){
+async function loadAll(){
   try {
-    const p = localStorage.getItem('marupos_products');
-    state.products = p ? JSON.parse(p) : seedProducts();
-    if(!p) saveProducts();
+    await initDB();
+    const p = await dbGetAll('products');
+    if (p && p.length > 0) {
+      state.products = p;
+    } else {
+      state.products = seedProducts();
+      await dbBulkPut('products', state.products);
+    }
 
-    const t = localStorage.getItem('marupos_transactions');
-    state.transactions = t ? JSON.parse(t) : [];
+    const t = await dbGetAll('transactions');
+    state.transactions = (t || []).sort((a,b) => new Date(b.date) - new Date(a.date));
 
-    const s = localStorage.getItem('marupos_settings');
-    state.settings = s ? JSON.parse(s) : { storeName: 'MaruPOS', taxPercent: 0 };
+    const s = await dbGetAll('settings');
+    const storeSetting = s.find(item => item.key === 'store_settings');
+    if (storeSetting) {
+      state.settings = storeSetting.val;
+    } else {
+      state.settings = { storeName: 'MaruPOS', taxPercent: 0 };
+      await dbPut('settings', { key: 'store_settings', val: state.settings });
+    }
   } catch(e) {
     console.error(e);
     state.products = seedProducts();
@@ -656,14 +780,44 @@ function loadAll(){
   }
 }
 
-function saveProducts(){
-  localStorage.setItem('marupos_products', JSON.stringify(state.products));
+async function saveProducts(){
+  await dbBulkPut('products', state.products);
+  updateIndexedDBStats();
 }
-function saveTransactions(){
-  localStorage.setItem('marupos_transactions', JSON.stringify(state.transactions));
+
+async function saveTransactions(){
+  await dbBulkPut('transactions', state.transactions);
+  updateIndexedDBStats();
 }
-function saveSettings(){
-  localStorage.setItem('marupos_settings', JSON.stringify(state.settings));
+
+async function saveSettings(){
+  await dbPut('settings', { key: 'store_settings', val: state.settings });
+  updateIndexedDBStats();
+}
+
+/* Detail Statistik Penggunaan Storage IndexedDB */
+async function updateIndexedDBStats(){
+  try {
+    const prodCount = state.products.length;
+    const trxCount = state.transactions.length;
+
+    document.getElementById('idbProdCount').textContent = `${prodCount} item`;
+    document.getElementById('idbTrxCount').textContent = `${trxCount} transaksi`;
+
+    if (navigator.storage && navigator.storage.estimate) {
+      const estimate = await navigator.storage.estimate();
+      const usageKB = (estimate.usage / 1024).toFixed(2);
+      const usageMB = (estimate.usage / (1024 * 1024)).toFixed(2);
+      const quotaMB = (estimate.quota / (1024 * 1024)).toFixed(2);
+      const percentage = ((estimate.usage / estimate.quota) * 100).toFixed(4);
+
+      document.getElementById('idbUsage').textContent = `${usageKB} KB (${usageMB} MB)`;
+      document.getElementById('idbQuota').textContent = `${quotaMB} MB`;
+      document.getElementById('idbProgress').style.width = `${Math.max(percentage, 0.5)}%`;
+    }
+  } catch (err) {
+    console.warn("Storage estimate API not supported", err);
+  }
 }
 
 function seedProducts(){
@@ -715,6 +869,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(btn.dataset.tab === 'riwayat') renderHistory();
     if(btn.dataset.tab === 'hutang') renderDebtTable();
     if(btn.dataset.tab === 'statistik') updateStatistikView();
+    if(btn.dataset.tab === 'pengaturan') updateIndexedDBStats();
   });
 });
 
@@ -909,12 +1064,11 @@ function updatePaymentUI(){
     const diff = cash - t.total;
 
     if(diff < 0){
-      // Sisa pembayaran menjadi hutang
       changeLine.classList.add('negative');
       changeLine.querySelector('span').textContent = 'Kekurangan (Hutang)';
       changeEl.textContent = formatRupiah(Math.abs(diff));
       debtGroup.style.display = 'block';
-      checkoutBtn.disabled = false; // Boleh dilanjutkan sebagai transaksi hutang
+      checkoutBtn.disabled = false;
       checkoutBtn.textContent = 'Simpan Transaksi (Hutang)';
     } else {
       changeLine.classList.remove('negative');
@@ -962,7 +1116,7 @@ document.getElementById('checkoutBtn').addEventListener('click', async ()=>{
     const product = state.products.find(p=>p.id === item.id);
     if(product) product.stock -= item.qty;
   });
-  saveProducts();
+  await saveProducts();
 
   const now = new Date().toISOString();
   const profit = t.total - t.totalCost;
@@ -986,7 +1140,7 @@ document.getElementById('checkoutBtn').addEventListener('click', async ()=>{
   };
 
   state.transactions.unshift(trx);
-  saveTransactions();
+  await saveTransactions();
 
   showReceiptModal(trx);
 
@@ -1053,6 +1207,26 @@ document.getElementById('printReceiptBtn').addEventListener('click', ()=>{
   if(!trx) return;
   document.getElementById('printArea').innerHTML = buildReceiptHtml(trx, true);
   window.print();
+});
+
+document.getElementById('downloadReceiptImgBtn').addEventListener('click', ()=>{
+  const target = document.getElementById('receiptPreview');
+  const trxId = document.getElementById('receiptModalBackdrop').dataset.trxId || 'Struk';
+  if(!target) return;
+  
+  html2canvas(target, {
+    scale: 2,
+    backgroundColor: '#ffffff'
+  }).then(canvas => {
+    const link = document.createElement('a');
+    link.download = `Struk_${trxId}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    showToast('Struk berhasil diunduh sebagai gambar', 'success');
+  }).catch(err => {
+    console.error(err);
+    showToast('Gagal mengunduh gambar struk', 'error');
+  });
 });
 
 /* ===================== SCANNER (KAMERA & MANUAL) ===================== */
@@ -1132,7 +1306,7 @@ document.getElementById('uploadQR').addEventListener('change', e=>{
       const imgData = ctx.getImageData(0, 0, w, h);
       const code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: "dontInvert" });
       if(code && code.data) handleScanResult(code.data);
-      else showToast('QR/Barcode tidak terdeteksi dari gambar', 'error');
+      else showToast('QR tidak terdeteksi dari gambar', 'error');
     };
     img.src = ev.target.result;
   };
@@ -1244,7 +1418,7 @@ productForm.addEventListener('submit', async e=>{
     showToast('Produk ditambahkan', 'success');
   }
 
-  saveProducts();
+  await saveProducts();
   resetProductForm();
   populateCategoryFilter();
   renderQuickGrid();
@@ -1277,10 +1451,11 @@ function resetProductForm(prefillSku){
 }
 document.getElementById('cancelEditBtn').addEventListener('click', ()=>resetProductForm());
 
-function deleteProduct(id){
+async function deleteProduct(id){
   if(confirm('Aksi ini akan menghapus produk ini secara permanen.')){
     state.products = state.products.filter(p=>p.id !== id);
-    saveProducts();
+    await dbDelete('products', id);
+    await saveProducts();
     populateCategoryFilter();
     renderQuickGrid();
     renderProductTable();
@@ -1304,6 +1479,27 @@ document.getElementById('closeQrModal2').addEventListener('click', ()=>document.
 
 document.getElementById('printSingleQrThermalBtn').addEventListener('click', ()=>executePrintQr([state.activeQrProductId], 1, 'thermal'));
 document.getElementById('printSingleQrA4Btn').addEventListener('click', ()=>executePrintQr([state.activeQrProductId], 1, 'a4'));
+
+document.getElementById('downloadSingleQrImgBtn').addEventListener('click', ()=>{
+  const target = document.getElementById('qrModalBody');
+  const p = state.products.find(x=>x.id === state.activeQrProductId);
+  const fileName = p ? `QR_${p.sku}_${p.name.replace(/[^a-zA-Z0-9]/g, '_')}` : 'QR_Produk';
+  if(!target) return;
+
+  html2canvas(target, {
+    scale: 2,
+    backgroundColor: '#ffffff'
+  }).then(canvas => {
+    const link = document.createElement('a');
+    link.download = `${fileName}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    showToast('QR Code berhasil diunduh sebagai gambar', 'success');
+  }).catch(err => {
+    console.error(err);
+    showToast('Gagal mengunduh gambar QR Code', 'error');
+  });
+});
 
 document.getElementById('printSelectedBtn').addEventListener('click', ()=>{
   const selected = Array.from(document.querySelectorAll('.rowSelect:checked')).map(cb=>cb.dataset.id);
@@ -1431,10 +1627,11 @@ function renderHistory(){
   });
 }
 
-function deleteTransaction(id){
+async function deleteTransaction(id){
   if(confirm('Apakah Anda yakin ingin menghapus riwayat transaksi ini? Data statistik dan hutang akan disesuaikan.')){
     state.transactions = state.transactions.filter(t=>t.id !== id);
-    saveTransactions();
+    await dbDelete('transactions', id);
+    await saveTransactions();
     renderHistory();
     renderDebtTable();
     updateStatistikView();
@@ -1495,7 +1692,7 @@ function openPayDebtModal(trxId){
 document.getElementById('closePayDebtModal').addEventListener('click', ()=>document.getElementById('payDebtModalBackdrop').classList.remove('show'));
 document.getElementById('closePayDebtModal2').addEventListener('click', ()=>document.getElementById('payDebtModalBackdrop').classList.remove('show'));
 
-document.getElementById('confirmPayDebtBtn').addEventListener('click', ()=>{
+document.getElementById('confirmPayDebtBtn').addEventListener('click', async ()=>{
   const amount = parseFloat(document.getElementById('pdAmount').value);
   const trx = state.transactions.find(t=>t.id === activeDebtTrxId);
   if(!trx || isNaN(amount) || amount <= 0){
@@ -1507,7 +1704,7 @@ document.getElementById('confirmPayDebtBtn').addEventListener('click', ()=>{
   trx.debtRemaining = Math.max(0, trx.total - trx.cashReceived);
   if(trx.debtRemaining <= 0) trx.isDebt = false;
 
-  saveTransactions();
+  await saveTransactions();
   document.getElementById('payDebtModalBackdrop').classList.remove('show');
   renderDebtTable();
   updateStatistikView();
@@ -1548,7 +1745,6 @@ function renderChart(){
   const now = new Date();
 
   if(state.activeChartPeriod === 'daily'){
-    // Grafik 24 Jam Hari Ini
     labels = Array.from({length:24}, (_,i)=> `${String(i).padStart(2,'0')}:00`);
     salesData = new Array(24).fill(0);
     profitData = new Array(24).fill(0);
@@ -1562,7 +1758,6 @@ function renderChart(){
       }
     });
   } else if(state.activeChartPeriod === 'monthly'){
-    // 12 Bulan Terakhir
     labels = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
     salesData = new Array(12).fill(0);
     profitData = new Array(12).fill(0);
@@ -1577,7 +1772,6 @@ function renderChart(){
       }
     });
   } else if(state.activeChartPeriod === 'yearly'){
-    // 5 Tahun Terakhir
     const currentYear = now.getFullYear();
     labels = Array.from({length:5}, (_,i)=> String(currentYear - 4 + i));
     salesData = new Array(5).fill(0);
@@ -1687,7 +1881,7 @@ document.getElementById('importExcelFile').addEventListener('change', (e)=>{
   if(!file) return;
 
   const reader = new FileReader();
-  reader.onload = (evt)=>{
+  reader.onload = async (evt)=>{
     try {
       const data = new Uint8Array(evt.target.result);
       const workbook = XLSX.read(data, {type: 'array'});
@@ -1705,7 +1899,7 @@ document.getElementById('importExcelFile').addEventListener('change', (e)=>{
             price: parseFloat(p.Harga_Jual) || 0,
             stock: parseInt(p.Stok, 10) || 0
           }));
-          saveProducts();
+          await saveProducts();
         }
       }
 
@@ -1728,7 +1922,7 @@ document.getElementById('importExcelFile').addEventListener('change', (e)=>{
             cashReceived: (parseFloat(t.Total) || 0) - (parseFloat(t.Sisa_Hutang) || 0),
             items: []
           }));
-          saveTransactions();
+          await saveTransactions();
         }
       }
 
@@ -1748,11 +1942,11 @@ document.getElementById('importExcelFile').addEventListener('change', (e)=>{
 });
 
 /* ===================== PENGATURAN ===================== */
-document.getElementById('settingsForm').addEventListener('submit', e=>{
+document.getElementById('settingsForm').addEventListener('submit', async e=>{
   e.preventDefault();
   state.settings.storeName = document.getElementById('sStoreName').value.trim() || 'MaruPOS';
   state.settings.taxPercent = parseFloat(document.getElementById('sTax').value) || 0;
-  saveSettings();
+  await saveSettings();
   applySettingsToUI();
   renderTotals();
   showToast('Pengaturan toko disimpan', 'success');
@@ -1765,12 +1959,13 @@ function applySettingsToUI(){
 }
 
 /* ===================== INITIALIZATION ===================== */
-function init(){
-  loadAll();
+async function init(){
+  await loadAll();
   applySettingsToUI();
   populateCategoryFilter();
   renderQuickGrid();
   renderCart();
+  updateIndexedDBStats();
 }
 init();
 </script>
