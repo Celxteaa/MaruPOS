@@ -617,6 +617,7 @@
 
 <div id="printArea"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script>
 /* ===================== STATE & PERSISTENT STORAGE ===================== */
 const QR_PREFIX = 'MARUPOS:';
@@ -1062,18 +1063,24 @@ document.getElementById('startCamBtn').addEventListener('click', startCamera);
 document.getElementById('stopCamBtn').addEventListener('click', stopCamera);
 
 async function startCamera(){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast('Browser/koneksi tidak mendukung akses kamera (perlu HTTPS)', 'error');
+    return;
+  }
   try{
     state.camStream = await navigator.mediaDevices.getUserMedia({ 
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } 
+      video: { facingMode: "environment" } 
     });
     video.srcObject = state.camStream;
+    video.setAttribute("playsinline", true);
     await video.play();
     state.camScanning = true;
     document.getElementById('startCamBtn').style.display = 'none';
     document.getElementById('stopCamBtn').style.display = 'inline-block';
     requestAnimationFrame(scanLoop);
   }catch(err){
-    showToast('Kamera tidak dapat diakses.', 'error');
+    console.error(err);
+    showToast('Kamera tidak dapat diakses atau izin ditolak.', 'error');
   }
 }
 
@@ -1089,7 +1096,7 @@ function stopCamera(){
 
 function scanLoop(){
   if(!state.camScanning) return;
-  if(video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth){
+  if(video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0 && video.videoHeight > 0){
     scanCanvas.width = video.videoWidth;
     scanCanvas.height = video.videoHeight;
     const ctx = scanCanvas.getContext('2d');
@@ -1123,7 +1130,7 @@ document.getElementById('uploadQR').addEventListener('change', e=>{
       const ctx = c.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
       const imgData = ctx.getImageData(0, 0, w, h);
-      const code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: "attemptBoth" });
+      const code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: "dontInvert" });
       if(code && code.data) handleScanResult(code.data);
       else showToast('QR/Barcode tidak terdeteksi dari gambar', 'error');
     };
