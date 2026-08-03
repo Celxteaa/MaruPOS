@@ -331,41 +331,6 @@
   .license-status { font-size: 12px; font-weight: 600; margin-top: 10px; min-height: 18px; }
   .license-status.error { color: var(--danger); }
   .license-status.success { color: var(--success); }
-  /* ---------- install prompt banner (PWA) ---------- */
-  #installBanner{
-    position:fixed;left:16px;right:16px;bottom:16px;z-index:60;
-    max-width:480px;margin:0 auto;
-    background:var(--primary);color:#fff;
-    border-radius:var(--radius);
-    box-shadow:0 8px 24px rgba(0,0,0,.22);
-    padding:14px 16px;
-    display:none;
-    align-items:center;gap:12px;
-    animation:installSlideUp .25s ease;
-  }
-  #installBanner.show{display:flex;}
-  #installBanner .install-icon{
-    width:38px;height:38px;flex:none;border-radius:10px;background:var(--accent);
-    display:flex;align-items:center;justify-content:center;
-    font-family:var(--font-display);font-weight:700;color:var(--primary-dark);font-size:16px;
-  }
-  #installBanner .install-text{flex:1;min-width:0;}
-  #installBanner .install-text .t1{font-family:var(--font-display);font-weight:700;font-size:14px;}
-  #installBanner .install-text .t2{font-size:12px;color:#C6C7E2;margin-top:2px;}
-  #installBanner .install-actions{display:flex;gap:8px;flex:none;}
-  #installBanner button{
-    border:none;border-radius:8px;cursor:pointer;font-weight:700;font-family:var(--font-body);
-    padding:8px 12px;font-size:12.5px;
-  }
-  #installBanner .btn-install-now{background:var(--accent);color:var(--primary-dark);}
-  #installBanner .btn-install-now:hover{filter:brightness(1.05);}
-  #installBanner .btn-install-dismiss{background:rgba(255,255,255,.12);color:#fff;}
-  #installBanner .btn-install-dismiss:hover{background:rgba(255,255,255,.2);}
-  @keyframes installSlideUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:none;}}
-  @media (max-width:480px){
-    #installBanner{left:10px;right:10px;bottom:10px;padding:12px;}
-    #installBanner .install-text .t2{display:none;}
-  }
 </style>
 </head>
 <body>
@@ -655,19 +620,6 @@
 </div>
 
 <div id="toast"></div>
-
-<!-- Notifikasi/Banner Install Aplikasi (PWA) -->
-<div id="installBanner">
-  <div class="install-icon">M</div>
-  <div class="install-text">
-    <div class="t1">Pasang MaruPOS</div>
-    <div class="t2">Install aplikasi ini di perangkat Anda untuk akses lebih cepat &amp; offline.</div>
-  </div>
-  <div class="install-actions">
-    <button type="button" class="btn-install-dismiss" id="btnInstallDismiss">Nanti</button>
-    <button type="button" class="btn-install-now" id="btnInstallNow">Install</button>
-  </div>
-</div>
 
 <!-- Modal Struk -->
 <div class="modal-backdrop" id="receiptModalBackdrop">
@@ -2197,69 +2149,6 @@ init();
           .catch((err) => console.log('SW Registration Failed: ', err));
       });
     }
-  </script>
-  <script>
-    // ===================== BANNER/PEMBERITAHUAN INSTALL PWA =====================
-    (function(){
-      let deferredInstallPrompt = null;
-      const installBanner = document.getElementById('installBanner');
-      const btnInstallNow = document.getElementById('btnInstallNow');
-      const btnInstallDismiss = document.getElementById('btnInstallDismiss');
-      const DISMISS_KEY = 'maruPOS_installDismissed';
-
-      function showInstallBanner(){
-        if(!installBanner) return;
-        if(sessionStorage.getItem(DISMISS_KEY) === '1') return;
-        installBanner.classList.add('show');
-      }
-      function hideInstallBanner(){
-        if(!installBanner) return;
-        installBanner.classList.remove('show');
-      }
-
-      // Deteksi apakah sudah terpasang sebagai aplikasi (standalone)
-      function isRunningStandalone(){
-        return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-      }
-
-      window.addEventListener('beforeinstallprompt', (e) => {
-        e.preventDefault();
-        deferredInstallPrompt = e;
-        if(!isRunningStandalone()){
-          showInstallBanner();
-        }
-      });
-
-      if(btnInstallNow){
-        btnInstallNow.addEventListener('click', async () => {
-          hideInstallBanner();
-          if(!deferredInstallPrompt) return;
-          deferredInstallPrompt.prompt();
-          try{
-            const choice = await deferredInstallPrompt.userChoice;
-            if(choice && choice.outcome === 'accepted'){
-              if(typeof showToast === 'function') showToast('MaruPOS sedang dipasang...', 'success');
-            }
-          }catch(err){
-            console.log('Install prompt error:', err);
-          }
-          deferredInstallPrompt = null;
-        });
-      }
-
-      if(btnInstallDismiss){
-        btnInstallDismiss.addEventListener('click', () => {
-          hideInstallBanner();
-          sessionStorage.setItem(DISMISS_KEY, '1');
-        });
-      }
-
-      window.addEventListener('appinstalled', () => {
-        hideInstallBanner();
-        deferredInstallPrompt = null;
-        if(typeof showToast === 'function') showToast('MaruPOS berhasil dipasang di perangkat Anda', 'success');
-      });
-    })();
   </script>
 </body>
 </html>
