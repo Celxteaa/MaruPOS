@@ -331,6 +331,87 @@
   .license-status { font-size: 12px; font-weight: 600; margin-top: 10px; min-height: 18px; }
   .license-status.error { color: var(--danger); }
   .license-status.success { color: var(--success); }
+
+  /* Tampilan Alert / Banner Instalasi PWA */
+.pwa-banner {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 32px);
+  max-width: 480px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: slideUpPwa 0.35s ease-out;
+}
+
+@keyframes slideUpPwa {
+  from { opacity: 0; transform: translate(-50%, 20px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.pwa-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pwa-icon img {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.pwa-text strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: var(--primary-dark);
+}
+
+.pwa-text p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pwa-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn-pwa-install {
+  background: var(--accent);
+  color: var(--primary-dark);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+.btn-pwa-close {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
 </style>
 </head>
 <body>
@@ -706,6 +787,23 @@
       <button class="btn primary" id="confirmBulkThermalBtn" style="flex:1;">🖨️ Thermal (58mm)</button>
       <button class="btn accent" id="confirmBulkA4Btn" style="flex:1;">📄 Grid Kertas A4</button>
     </div>
+  </div>
+</div>
+
+<!-- Alert Banner Instalasi PWA Custom -->
+<div id="pwaInstallBanner" class="pwa-banner" style="display: none;">
+  <div class="pwa-content">
+    <div class="pwa-icon">
+      <img src="icon-152.png" alt="MaruPOS Icon">
+    </div>
+    <div class="pwa-text">
+      <strong>Instal MaruPOS</strong>
+      <p>Pasang aplikasi di layar utama untuk akses cepat &amp; fitur offline!</p>
+    </div>
+  </div>
+  <div class="pwa-actions">
+    <button id="btnPwaClose" class="btn-pwa-close" type="button">Nanti</button>
+    <button id="btnPwaInstall" class="btn-pwa-install" type="button">Instal Sekarang</button>
   </div>
 </div>
 
@@ -2150,5 +2248,58 @@ init();
       });
     }
   </script>
+  <script>
+  let deferredPrompt;
+  const pwaBanner = document.getElementById('pwaInstallBanner');
+  const btnInstall = document.getElementById('btnPwaInstall');
+  const btnClose = document.getElementById('btnPwaClose');
+
+  // Intercept event instalasi asli dari browser
+  window.addEventListener('beforeinstallprompt', (e) => {
+    // Cegah mini-infobar default browser agar tidak bentrok
+    e.preventDefault();
+    // Simpan event untuk dipicu saat tombol diklik
+    deferredPrompt = e;
+    
+    // Tampilkan banner custom alert
+    if (pwaBanner) {
+      pwaBanner.style.display = 'flex';
+    }
+  });
+
+  // Event Listener Klik Tombol 'Instal Sekarang'
+  if (btnInstall) {
+    btnInstall.addEventListener('click', async () => {
+      if (!deferredPrompt) return;
+
+      // Sembunyikan banner alert
+      pwaBanner.style.display = 'none';
+
+      // Munculkan dialog native konfirmasi instalasi browser
+      deferredPrompt.prompt();
+
+      // Tangkap pilihan pengguna (Accepted/Dismissed)
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`User response to install prompt: ${outcome}`);
+
+      // Reset variabel prompt
+      deferredPrompt = null;
+    });
+  }
+
+  // Sembunyikan banner jika user menekan tombol 'Nanti'
+  if (btnClose) {
+    btnClose.addEventListener('click', () => {
+      pwaBanner.style.display = 'none';
+    });
+  }
+
+  // Sembunyikan banner jika aplikasi sudah terinstal (Standalone mode)
+  window.addEventListener('appinstalled', () => {
+    if (pwaBanner) pwaBanner.style.display = 'none';
+    deferredPrompt = null;
+    console.log('PWA MaruPOS berhasil diinstal.');
+  });
+</script>
 </body>
 </html>
