@@ -50,6 +50,33 @@
   #app{min-height:100vh;display:flex;flex-direction:column;}
   ::selection{background:var(--accent-tint);}
 
+  /* ---------- pwa install banner ---------- */
+  .pwa-install-banner {
+    background: var(--accent-tint);
+    border-bottom: 1px solid var(--accent);
+    padding: 10px 16px;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    font-size: 13px;
+  }
+  .pwa-install-banner-text {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: var(--primary-dark);
+  }
+  .pwa-install-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
   /* ---------- topbar ---------- */
   .topbar{
     background:var(--primary);
@@ -331,87 +358,6 @@
   .license-status { font-size: 12px; font-weight: 600; margin-top: 10px; min-height: 18px; }
   .license-status.error { color: var(--danger); }
   .license-status.success { color: var(--success); }
-
-  /* Tampilan Alert / Banner Instalasi PWA */
-.pwa-banner {
-  position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: calc(100% - 32px);
-  max-width: 480px;
-  background: var(--surface);
-  border: 1px solid var(--accent);
-  border-radius: 14px;
-  padding: 14px 16px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  animation: slideUpPwa 0.35s ease-out;
-}
-
-@keyframes slideUpPwa {
-  from { opacity: 0; transform: translate(-50%, 20px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
-}
-
-.pwa-content {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.pwa-icon img {
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
-  object-fit: cover;
-}
-
-.pwa-text strong {
-  display: block;
-  font-family: var(--font-display);
-  font-size: 14px;
-  color: var(--primary-dark);
-}
-
-.pwa-text p {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.pwa-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.btn-pwa-install {
-  background: var(--accent);
-  color: var(--primary-dark);
-  border: none;
-  border-radius: 8px;
-  padding: 8px 16px;
-  font-weight: 700;
-  font-size: 12px;
-  cursor: pointer;
-  font-family: var(--font-body);
-}
-
-.btn-pwa-close {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 14px;
-  font-weight: 600;
-  font-size: 12px;
-  cursor: pointer;
-  font-family: var(--font-body);
-}
 </style>
 </head>
 <body>
@@ -428,6 +374,17 @@
 </div>
 
 <div id="app">
+  <!-- Alert Banner Install Aplikasi (PWA) -->
+  <div id="pwaInstallBanner" class="pwa-install-banner">
+    <div class="pwa-install-banner-text">
+      <span>📲 Install MaruPOS ke perangkat Anda untuk akses instan dan penggunaan offline!</span>
+    </div>
+    <div class="pwa-install-actions">
+      <button id="pwaInstallBtn" class="btn accent" style="padding: 6px 12px; font-size: 12px;">Install Sekarang</button>
+      <button id="pwaDismissBtn" class="btn ghost" style="padding: 6px 12px; font-size: 12px;">Nanti</button>
+    </div>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <span class="mark">Maru<span>POS</span></span>
@@ -791,23 +748,6 @@
 </div>
 
 <div id="printArea"></div>
-
-<!-- Alert Banner Instalasi PWA Custom -->
-<div id="pwaInstallBanner" class="pwa-banner" style="display: none;">
-  <div class="pwa-content">
-    <div class="pwa-icon">
-      <img src="icon-152.png" alt="MaruPOS Icon">
-    </div>
-    <div class="pwa-text">
-      <strong>Instal MaruPOS</strong>
-      <p>Pasang aplikasi di layar utama untuk akses cepat &amp; fitur offline!</p>
-    </div>
-  </div>
-  <div class="pwa-actions">
-    <button id="btnPwaClose" class="btn-pwa-close" type="button">Nanti</button>
-    <button id="btnPwaInstall" class="btn-pwa-install" type="button">Instal Sekarang</button>
-  </div>
-</div>
 
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script>
@@ -2247,59 +2187,39 @@ init();
           .catch((err) => console.log('SW Registration Failed: ', err));
       });
     }
-  </script>
-  <script>
-  let deferredPrompt;
-  const pwaBanner = document.getElementById('pwaInstallBanner');
-  const btnInstall = document.getElementById('btnPwaInstall');
-  const btnClose = document.getElementById('btnPwaClose');
 
-  // Intercept event instalasi asli dari browser
-  window.addEventListener('beforeinstallprompt', (e) => {
-    // Cegah mini-infobar default browser agar tidak bentrok
-    e.preventDefault();
-    // Simpan event untuk dipicu saat tombol diklik
-    deferredPrompt = e;
-    
-    // Tampilkan banner custom alert
-    if (pwaBanner) {
-      pwaBanner.style.display = 'flex';
+    // Logika Prompt Install Aplikasi (PWA)
+    let deferredPrompt;
+    const installBanner = document.getElementById('pwaInstallBanner');
+    const installBtn = document.getElementById('pwaInstallBtn');
+    const dismissBtn = document.getElementById('pwaDismissBtn');
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      if (installBanner) {
+        installBanner.style.display = 'flex';
+      }
+    });
+
+    if (installBtn) {
+      installBtn.addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        if (outcome === 'accepted') {
+          showToast('Aplikasi MaruPOS berhasil diinstall!', 'success');
+        }
+        deferredPrompt = null;
+        if (installBanner) installBanner.style.display = 'none';
+      });
     }
-  });
 
-  // Event Listener Klik Tombol 'Instal Sekarang'
-  if (btnInstall) {
-    btnInstall.addEventListener('click', async () => {
-      if (!deferredPrompt) return;
-
-      // Sembunyikan banner alert
-      pwaBanner.style.display = 'none';
-
-      // Munculkan dialog native konfirmasi instalasi browser
-      deferredPrompt.prompt();
-
-      // Tangkap pilihan pengguna (Accepted/Dismissed)
-      const { outcome } = await deferredPrompt.userChoice;
-      console.log(`User response to install prompt: ${outcome}`);
-
-      // Reset variabel prompt
-      deferredPrompt = null;
-    });
-  }
-
-  // Sembunyikan banner jika user menekan tombol 'Nanti'
-  if (btnClose) {
-    btnClose.addEventListener('click', () => {
-      pwaBanner.style.display = 'none';
-    });
-  }
-
-  // Sembunyikan banner jika aplikasi sudah terinstal (Standalone mode)
-  window.addEventListener('appinstalled', () => {
-    if (pwaBanner) pwaBanner.style.display = 'none';
-    deferredPrompt = null;
-    console.log('PWA MaruPOS berhasil diinstal.');
-  });
-</script>
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', () => {
+        if (installBanner) installBanner.style.display = 'none';
+      });
+    }
+  </script>
 </body>
 </html>
