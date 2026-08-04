@@ -483,10 +483,26 @@
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
           <h2 class="section-title" style="margin:0;">Grafik Penjualan & Laba</h2>
-          <div style="display:flex;gap:6px;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <button class="btn ghost active" id="chartFilterDaily">Harian (Jam)</button>
+            <button class="btn ghost" id="chartFilterWeekly">Mingguan</button>
             <button class="btn ghost" id="chartFilterMonthly">Bulanan</button>
             <button class="btn ghost" id="chartFilterYearly">Tahunan</button>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <input type="date" id="chartDatePicker" class="mono">
+            <input type="week" id="chartWeekPicker" class="mono" style="display:none;">
+            <select id="chartMonthYearPicker" class="mono" style="display:none;"></select>
+            <select id="chartYearEndPicker" class="mono" style="display:none;"></select>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <label for="chartTypePicker" class="muted" style="font-size:12px;">Tipe Grafik</label>
+            <select id="chartTypePicker" class="mono">
+              <option value="line">Garis (Line)</option>
+              <option value="bar">Batang (Bar)</option>
+            </select>
           </div>
         </div>
         <div class="chart-container">
@@ -707,6 +723,7 @@
         <label for="pdAmount">Jumlah Pembayaran (Rp)</label>
         <input type="number" id="pdAmount" min="1" placeholder="Masukkan nominal...">
       </div>
+      <div class="change-line" id="pdChangeLine" style="margin-top:6px;"><span>Kembalian</span><span id="pdChangeAmount" class="mono">Rp0</span></div>
     </div>
     <div class="modal-foot">
       <button class="btn success" id="confirmPayDebtBtn" style="flex:1;">Proses Pembayaran</button>
@@ -960,7 +977,12 @@ let state = {
   camStream: null,
   camScanning: false,
   activeChartPeriod: 'daily',
-  activeQrProductId: null
+  activeQrProductId: null,
+  chartType: 'line',
+  chartDate: new Date().toISOString().slice(0,10),
+  chartWeek: '',
+  chartMonthYear: new Date().getFullYear(),
+  chartYearEnd: new Date().getFullYear()
 };
 
 let chartInstance = null;
@@ -1903,8 +1925,30 @@ function openPayDebtModal(trxId){
   document.getElementById('pdCustomer').value = trx.customerName;
   document.getElementById('pdRemaining').value = formatRupiah(trx.debtRemaining);
   document.getElementById('pdAmount').value = '';
+  updatePayDebtChangePreview();
   document.getElementById('payDebtModalBackdrop').classList.add('show');
 }
+
+function updatePayDebtChangePreview(){
+  const trx = state.transactions.find(t=>t.id === activeDebtTrxId);
+  const changeLine = document.getElementById('pdChangeLine');
+  const changeEl = document.getElementById('pdChangeAmount');
+  if(!trx){ changeLine.style.display = 'none'; return; }
+
+  const amount = parseFloat(document.getElementById('pdAmount').value) || 0;
+  const overpay = amount - trx.debtRemaining;
+
+  if(overpay > 0){
+    changeLine.style.display = 'flex';
+    changeLine.classList.remove('negative');
+    changeEl.textContent = formatRupiah(overpay);
+  } else {
+    changeLine.style.display = 'none';
+    changeEl.textContent = 'Rp0';
+  }
+}
+
+document.getElementById('pdAmount').addEventListener('input', updatePayDebtChangePreview);
 
 document.getElementById('closePayDebtModal').addEventListener('click', ()=>document.getElementById('payDebtModalBackdrop').classList.remove('show'));
 document.getElementById('closePayDebtModal2').addEventListener('click', ()=>document.getElementById('payDebtModalBackdrop').classList.remove('show'));
@@ -1917,15 +1961,34 @@ document.getElementById('confirmPayDebtBtn').addEventListener('click', async ()=
     return;
   }
 
-  trx.cashReceived += amount;
-  trx.debtRemaining = Math.max(0, trx.total - trx.cashReceived);
-  if(trx.debtRemaining <= 0) trx.isDebt = false;
+  // Hitung logis: kelebihan bayar dari sisa hutang dicatat sebagai kembalian,
+  // bukan ditambahkan begitu saja ke cashReceived (yang bisa membuat cashReceived > total).
+  const remainingBefore = trx.debtRemaining;
+  let changeGiven = 0;
+
+  if(amount >= remainingBefore){
+    changeGiven = amount - remainingBefore;
+    trx.cashReceived = trx.total; // lunas, uang diterima = total transaksi
+    trx.debtRemaining = 0;
+    trx.isDebt = false;
+  } else {
+    trx.cashReceived += amount;
+    trx.debtRemaining = Math.max(0, trx.total - trx.cashReceived);
+  }
+  trx.change = (trx.change || 0) + changeGiven;
 
   await saveTransactions();
   document.getElementById('payDebtModalBackdrop').classList.remove('show');
   renderDebtTable();
+  renderHistory();
   updateStatistikView();
-  showToast('Pembayaran hutang berhasil dicatat', 'success');
+
+  if(changeGiven > 0){
+    showToast(`Hutang lunas. Kembalian: ${formatRupiah(changeGiven)}`, 'success');
+    showReceiptModal(trx);
+  } else {
+    showToast('Pembayaran hutang berhasil dicatat', 'success');
+  }
 });
 
 /* ===================== STATISTIK & GRAFIK (CHART.JS) ===================== */
@@ -1943,6 +2006,7 @@ function updateStatistikView(){
 }
 
 document.getElementById('chartFilterDaily').addEventListener('click', (e)=>{ switchChartPeriod('daily', e.target); });
+document.getElementById('chartFilterWeekly').addEventListener('click', (e)=>{ switchChartPeriod('weekly', e.target); });
 document.getElementById('chartFilterMonthly').addEventListener('click', (e)=>{ switchChartPeriod('monthly', e.target); });
 document.getElementById('chartFilterYearly').addEventListener('click', (e)=>{ switchChartPeriod('yearly', e.target); });
 
@@ -1950,28 +2014,132 @@ function switchChartPeriod(period, btn){
   document.querySelectorAll('#tab-statistik .btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   state.activeChartPeriod = period;
+
+  document.getElementById('chartDatePicker').style.display = period === 'daily' ? 'inline-block' : 'none';
+  document.getElementById('chartWeekPicker').style.display = period === 'weekly' ? 'inline-block' : 'none';
+  document.getElementById('chartMonthYearPicker').style.display = period === 'monthly' ? 'inline-block' : 'none';
+  document.getElementById('chartYearEndPicker').style.display = period === 'yearly' ? 'inline-block' : 'none';
+
   renderChart();
 }
 
+function getISOWeekString(date){
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayNum = (d.getDay() + 6) % 7; // Senin=0 ... Minggu=6
+  d.setDate(d.getDate() - dayNum + 3); // geser ke Kamis minggu ybs
+  const firstThursday = new Date(d.getFullYear(), 0, 4);
+  const firstDayNum = (firstThursday.getDay() + 6) % 7;
+  firstThursday.setDate(firstThursday.getDate() - firstDayNum + 3);
+  const weekNum = 1 + Math.round((d - firstThursday) / (7*24*3600*1000));
+  return `${d.getFullYear()}-W${String(weekNum).padStart(2,'0')}`;
+}
+
+function getWeekRange(weekStr){
+  const [yearStr, weekPart] = weekStr.split('-W');
+  const year = Number(yearStr);
+  const week = Number(weekPart);
+  if(!year || !week) return { start: new Date(0), end: new Date(0) };
+  const jan4 = new Date(year, 0, 4);
+  const jan4DayNum = (jan4.getDay() + 6) % 7;
+  const week1Monday = new Date(jan4);
+  week1Monday.setDate(jan4.getDate() - jan4DayNum);
+  const start = new Date(week1Monday);
+  start.setDate(week1Monday.getDate() + (week-1)*7);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return { start, end };
+}
+
+function getAvailableYears(){
+  const years = new Set();
+  const nowYear = new Date().getFullYear();
+  years.add(nowYear);
+  state.transactions.forEach(t=>{
+    const y = new Date(t.date).getFullYear();
+    if(!isNaN(y)) years.add(y);
+  });
+  return Array.from(years).sort((a,b)=>a-b);
+}
+
+function populateChartPickers(){
+  const dateEl = document.getElementById('chartDatePicker');
+  if(!dateEl.value) dateEl.value = state.chartDate;
+
+  const weekEl = document.getElementById('chartWeekPicker');
+  if(!state.chartWeek) state.chartWeek = getISOWeekString(new Date());
+  if(!weekEl.value) weekEl.value = state.chartWeek;
+
+  const years = getAvailableYears();
+
+  const monthYearEl = document.getElementById('chartMonthYearPicker');
+  const prevMonthYearVal = monthYearEl.value || String(state.chartMonthYear);
+  monthYearEl.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join('');
+  monthYearEl.value = years.includes(Number(prevMonthYearVal)) ? prevMonthYearVal : String(years[years.length-1]);
+  state.chartMonthYear = Number(monthYearEl.value);
+
+  const yearEndEl = document.getElementById('chartYearEndPicker');
+  const prevYearEndVal = yearEndEl.value || String(state.chartYearEnd);
+  yearEndEl.innerHTML = years.map(y=>`<option value="${y}">${y}</option>`).join('');
+  yearEndEl.value = years.includes(Number(prevYearEndVal)) ? prevYearEndVal : String(years[years.length-1]);
+  state.chartYearEnd = Number(yearEndEl.value);
+}
+
+document.getElementById('chartDatePicker').addEventListener('change', (e)=>{
+  state.chartDate = e.target.value || new Date().toISOString().slice(0,10);
+  renderChart();
+});
+document.getElementById('chartWeekPicker').addEventListener('change', (e)=>{
+  state.chartWeek = e.target.value || getISOWeekString(new Date());
+  renderChart();
+});
+document.getElementById('chartMonthYearPicker').addEventListener('change', (e)=>{
+  state.chartMonthYear = Number(e.target.value);
+  renderChart();
+});
+document.getElementById('chartYearEndPicker').addEventListener('change', (e)=>{
+  state.chartYearEnd = Number(e.target.value);
+  renderChart();
+});
+document.getElementById('chartTypePicker').addEventListener('change', (e)=>{
+  state.chartType = e.target.value;
+  renderChart();
+});
+
 function renderChart(){
+  populateChartPickers();
+
   const ctx = document.getElementById('salesChart').getContext('2d');
   let labels = [];
   let salesData = [];
   let profitData = [];
-
-  const now = new Date();
 
   if(state.activeChartPeriod === 'daily'){
     labels = Array.from({length:24}, (_,i)=> `${String(i).padStart(2,'0')}:00`);
     salesData = new Array(24).fill(0);
     profitData = new Array(24).fill(0);
 
-    const todayStr = now.toISOString().slice(0,10);
+    const targetDateStr = state.chartDate || new Date().toISOString().slice(0,10);
     state.transactions.forEach(t=>{
-      if(t.date.slice(0,10) === todayStr){
+      if(t.date.slice(0,10) === targetDateStr){
         const hour = new Date(t.date).getHours();
         salesData[hour] += t.total;
         profitData[hour] += (t.profit||0);
+      }
+    });
+  } else if(state.activeChartPeriod === 'weekly'){
+    labels = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu','Minggu'];
+    salesData = new Array(7).fill(0);
+    profitData = new Array(7).fill(0);
+
+    const weekStr = state.chartWeek || getISOWeekString(new Date());
+    const { start, end } = getWeekRange(weekStr);
+    state.transactions.forEach(t=>{
+      const d = new Date(t.date);
+      const dOnly = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      if(dOnly >= start && dOnly <= end){
+        const dayIdx = (d.getDay() + 6) % 7; // Senin=0 ... Minggu=6
+        salesData[dayIdx] += t.total;
+        profitData[dayIdx] += (t.profit||0);
       }
     });
   } else if(state.activeChartPeriod === 'monthly'){
@@ -1979,18 +2147,18 @@ function renderChart(){
     salesData = new Array(12).fill(0);
     profitData = new Array(12).fill(0);
 
-    const currentYear = now.getFullYear();
+    const targetYear = state.chartMonthYear;
     state.transactions.forEach(t=>{
       const d = new Date(t.date);
-      if(d.getFullYear() === currentYear){
+      if(d.getFullYear() === targetYear){
         const month = d.getMonth();
         salesData[month] += t.total;
         profitData[month] += (t.profit||0);
       }
     });
   } else if(state.activeChartPeriod === 'yearly'){
-    const currentYear = now.getFullYear();
-    labels = Array.from({length:5}, (_,i)=> String(currentYear - 4 + i));
+    const endYear = state.chartYearEnd;
+    labels = Array.from({length:5}, (_,i)=> String(endYear - 4 + i));
     salesData = new Array(5).fill(0);
     profitData = new Array(5).fill(0);
 
@@ -2006,13 +2174,16 @@ function renderChart(){
 
   if(chartInstance) chartInstance.destroy();
 
+  const chartType = state.chartType === 'bar' ? 'bar' : 'line';
+  const isLine = chartType === 'line';
+
   chartInstance = new Chart(ctx, {
-    type: 'line',
+    type: chartType,
     data: {
       labels: labels,
       datasets: [
-        { label: 'Penjualan (Omset)', data: salesData, borderColor: '#33355C', backgroundColor: 'rgba(51,53,92,0.1)', fill: true, tension: 0.3 },
-        { label: 'Laba Bersih', data: profitData, borderColor: '#2E7D32', backgroundColor: 'rgba(46,125,50,0.1)', fill: true, tension: 0.3 }
+        { label: 'Penjualan (Omset)', data: salesData, borderColor: '#33355C', backgroundColor: isLine ? 'rgba(51,53,92,0.1)' : '#33355C', fill: isLine, tension: 0.3, spanGaps: true },
+        { label: 'Laba Bersih', data: profitData, borderColor: '#2E7D32', backgroundColor: isLine ? 'rgba(46,125,50,0.1)' : '#2E7D32', fill: isLine, tension: 0.3, spanGaps: true }
       ]
     },
     options: {
