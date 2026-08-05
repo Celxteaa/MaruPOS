@@ -16,6 +16,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<!-- Library pembaca Barcode 1D (EAN/UPC/Code128/dll) untuk fitur Scan Barcode -->
+<script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
 
 <style>
   :root{
@@ -404,12 +406,16 @@
       <div class="kasir-grid">
         <div class="scan-col">
           <div class="card scanner-card">
-            <h2 class="section-title" style="margin-bottom:8px;">Pindai QR</h2>
+            <h2 class="section-title" style="margin-bottom:8px;">Pindai Produk (QR / Barcode)</h2>
             <video id="video" playsinline muted></video>
             <canvas id="scanCanvas" style="display:none;"></canvas>
+            <video id="kasirBarcodeVideo" playsinline muted style="display:none;"></video>
+            <canvas id="kasirBarcodeCanvas" style="display:none;"></canvas>
             <div class="scan-actions">
               <button class="btn primary" id="startCamBtn">📷 Scan QR</button>
               <button class="btn ghost" id="stopCamBtn" style="display:none;">Hentikan Kamera</button>
+              <button class="btn primary" id="startKasirBarcodeBtn">🔲 Scan Barcode</button>
+              <button class="btn ghost" id="stopKasirBarcodeBtn" style="display:none;">Hentikan Kamera</button>
               <label class="btn ghost" style="cursor:pointer;">
                 Unggah Gambar
                 <input type="file" id="uploadQR" accept="image/*" style="display:none;">
@@ -522,9 +528,25 @@
               <label for="pName">Nama Produk *</label>
               <input type="text" id="pName" required placeholder="cth. Kopi Susu">
             </div>
-            <div class="field">
-              <label for="pSku">Kode SKU / QR Code</label>
-              <input type="text" id="pSku" placeholder="Kosongkan untuk otomatis" class="mono">
+            <div class="field-row" style="display:flex;gap:10px;flex-wrap:wrap;">
+              <div class="field" style="flex:1;min-width:140px;margin-bottom:0;">
+                <label for="pSku">Kode SKU / QR Code</label>
+                <input type="text" id="pSku" placeholder="Kosongkan untuk otomatis" class="mono">
+              </div>
+              <div class="field" style="flex:1;min-width:140px;margin-bottom:0;">
+                <label for="pBarcode">Kode Barcode (Opsional)</label>
+                <div style="display:flex;gap:6px;">
+                  <input type="text" id="pBarcode" placeholder="Scan atau ketik manual" class="mono" style="flex:1;min-width:0;">
+                  <button type="button" class="btn ghost" id="scanBarcodeBtn" title="Scan Barcode">📷</button>
+                </div>
+              </div>
+            </div>
+            <div class="scan-result-card" id="barcodeScannerBox" style="display:none;">
+              <video id="barcodeVideo" playsinline muted style="width:100%;border-radius:8px;background:#0d0d0d;max-height:200px;object-fit:cover;display:block;"></video>
+              <canvas id="barcodeCanvas" style="display:none;"></canvas>
+              <div class="scan-actions">
+                <button type="button" class="btn ghost" id="stopBarcodeCamBtn">Hentikan Kamera</button>
+              </div>
             </div>
             <div class="field">
               <label for="pCost">Harga Beli / Modal (Opsional)</label>
@@ -976,10 +998,13 @@ let state = {
   scanCooldown: false,
   camStream: null,
   camScanning: false,
+  barcodeCamStream: null,
+  barcodeCamScanning: false,
+  barcodeScanCooldown: false,
   activeChartPeriod: 'daily',
   activeQrProductId: null,
   chartType: 'line',
-  chartDate: new Date().toISOString().slice(0,10),
+  chartDate: toLocalISODate(new Date()),
   chartWeek: '',
   chartMonthYear: new Date().getFullYear(),
   chartYearEnd: new Date().getFullYear()
@@ -1079,6 +1104,15 @@ function genId(prefix){
 function formatRupiah(n){
   return 'Rp' + Math.round(n||0).toLocaleString('id-ID');
 }
+// Mengubah Date/ISO string menjadi format YYYY-MM-DD berdasarkan tanggal & waktu LOKAL
+// (bukan UTC), agar grafik harian selalu sinkron dengan tanggal & jam asli transaksi.
+function toLocalISODate(dateInput){
+  const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
 function showToast(msg, type){
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -1101,6 +1135,8 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     
+    if(btn.dataset.tab !== 'produk' && typeof stopBarcodeCamera === 'function') stopBarcodeCamera();
+    if(btn.dataset.tab !== 'kasir' && typeof stopKasirBarcodeScan === 'function') stopKasirBarcodeScan();
     if(btn.dataset.tab === 'produk') renderProductTable();
     if(btn.dataset.tab === 'riwayat') renderHistory();
     if(btn.dataset.tab === 'hutang') renderDebtTable();
@@ -1474,6 +1510,10 @@ const scanCanvas = document.getElementById('scanCanvas');
 
 document.getElementById('startCamBtn').addEventListener('click', startCamera);
 document.getElementById('stopCamBtn').addEventListener('click', stopCamera);
+// Listener tambahan: pastikan kamera Scan Barcode berhenti saat Scan QR diaktifkan (mencegah 2 kamera aktif bersamaan)
+document.getElementById('startCamBtn').addEventListener('click', ()=>{
+  if(typeof stopKasirBarcodeScan === 'function') stopKasirBarcodeScan();
+});
 
 async function startCamera(){
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1578,6 +1618,110 @@ function handleScanResult(raw){
   }
 }
 
+/* ===================== SCANNER BARCODE (KASIR - TAMBAH KE KERANJANG) ===================== */
+const kasirBarcodeVideo = document.getElementById('kasirBarcodeVideo');
+let kasirZxingReader = null;
+let kasirBarcodeScanCooldown = false;
+
+document.getElementById('startKasirBarcodeBtn').addEventListener('click', startKasirBarcodeScan);
+document.getElementById('stopKasirBarcodeBtn').addEventListener('click', stopKasirBarcodeScan);
+
+async function startKasirBarcodeScan(){
+  if (typeof ZXing === 'undefined') {
+    showToast('Modul pembaca barcode gagal dimuat. Periksa koneksi internet.', 'error');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast('Browser/koneksi tidak mendukung akses kamera (perlu HTTPS)', 'error');
+    return;
+  }
+  if(state.camScanning && typeof stopCamera === 'function') stopCamera();
+  try{
+    kasirZxingReader = new ZXing.BrowserMultiFormatReader();
+    kasirBarcodeVideo.style.display = 'block';
+    document.getElementById('startKasirBarcodeBtn').style.display = 'none';
+    document.getElementById('stopKasirBarcodeBtn').style.display = 'inline-block';
+    await kasirZxingReader.decodeFromConstraints(
+      { video: { facingMode: "environment" } },
+      kasirBarcodeVideo,
+      (result)=>{
+        if(result && !kasirBarcodeScanCooldown){
+          handleScanResult(result.getText());
+          kasirBarcodeScanCooldown = true;
+          setTimeout(()=>{ kasirBarcodeScanCooldown = false; }, 1300);
+        }
+      }
+    );
+  }catch(err){
+    console.error(err);
+    showToast('Kamera tidak dapat diakses atau izin ditolak.', 'error');
+    stopKasirBarcodeScan();
+  }
+}
+
+function stopKasirBarcodeScan(){
+  if(kasirZxingReader){
+    try{ kasirZxingReader.reset(); }catch(e){}
+    kasirZxingReader = null;
+  }
+  kasirBarcodeVideo.style.display = 'none';
+  document.getElementById('startKasirBarcodeBtn').style.display = 'inline-block';
+  document.getElementById('stopKasirBarcodeBtn').style.display = 'none';
+}
+
+/* ===================== SCANNER BARCODE (FORM TAMBAH/EDIT PRODUK) ===================== */
+const barcodeVideo = document.getElementById('barcodeVideo');
+let produkZxingReader = null;
+
+document.getElementById('scanBarcodeBtn').addEventListener('click', ()=>{
+  if(state.barcodeCamScanning){ stopBarcodeCamera(); } else { startBarcodeCamera(); }
+});
+document.getElementById('stopBarcodeCamBtn').addEventListener('click', stopBarcodeCamera);
+
+async function startBarcodeCamera(){
+  if (typeof ZXing === 'undefined') {
+    showToast('Modul pembaca barcode gagal dimuat. Periksa koneksi internet.', 'error');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast('Browser/koneksi tidak mendukung akses kamera (perlu HTTPS)', 'error');
+    return;
+  }
+  try{
+    produkZxingReader = new ZXing.BrowserMultiFormatReader();
+    state.barcodeCamScanning = true;
+    document.getElementById('barcodeScannerBox').style.display = 'block';
+    await produkZxingReader.decodeFromConstraints(
+      { video: { facingMode: "environment" } },
+      barcodeVideo,
+      (result)=>{
+        if(result && !state.barcodeScanCooldown){
+          let val = result.getText();
+          if(val.startsWith(QR_PREFIX)) val = val.slice(QR_PREFIX.length);
+          document.getElementById('pBarcode').value = val;
+          showToast('Kode barcode terpindai: ' + val, 'success');
+          state.barcodeScanCooldown = true;
+          setTimeout(()=>{ state.barcodeScanCooldown = false; }, 1300);
+          stopBarcodeCamera();
+        }
+      }
+    );
+  }catch(err){
+    console.error(err);
+    showToast('Kamera tidak dapat diakses atau izin ditolak.', 'error');
+    state.barcodeCamScanning = false;
+  }
+}
+
+function stopBarcodeCamera(){
+  state.barcodeCamScanning = false;
+  if(produkZxingReader){
+    try{ produkZxingReader.reset(); }catch(e){}
+    produkZxingReader = null;
+  }
+  document.getElementById('barcodeScannerBox').style.display = 'none';
+}
+
 /* ===================== MANAGEMENT PRODUK ===================== */
 async function renderProductTable(){
   const tbody = document.getElementById('productTableBody');
@@ -1634,6 +1778,7 @@ productForm.addEventListener('submit', async e=>{
   e.preventDefault();
   const name = document.getElementById('pName').value.trim();
   let sku = document.getElementById('pSku').value.trim();
+  const barcode = document.getElementById('pBarcode').value.trim();
   const cost = parseFloat(document.getElementById('pCost').value)||0;
   const price = parseFloat(document.getElementById('pPrice').value);
   const stock = parseInt(document.getElementById('pStock').value, 10);
@@ -1647,13 +1792,13 @@ productForm.addEventListener('submit', async e=>{
   if(state.editingProductId){
     const p = state.products.find(x=>x.id === state.editingProductId);
     if(p){
-      p.name = name; p.sku = sku || p.id; p.cost = cost; p.price = price; p.stock = stock; p.category = category;
+      p.name = name; p.sku = sku || p.id; p.barcode = barcode; p.cost = cost; p.price = price; p.stock = stock; p.category = category;
     }
     showToast('Produk diperbarui', 'success');
   } else {
     const id = genId('MPS');
     if(!sku) sku = id;
-    state.products.push({ id, sku, name, cost, price, stock, category });
+    state.products.push({ id, sku, barcode, name, cost, price, stock, category });
     showToast('Produk ditambahkan', 'success');
   }
 
@@ -1672,6 +1817,7 @@ function startEditProduct(id){
   document.getElementById('pId').value = p.id;
   document.getElementById('pName').value = p.name;
   document.getElementById('pSku').value = p.sku;
+  document.getElementById('pBarcode').value = p.barcode || '';
   document.getElementById('pCost').value = p.cost||0;
   document.getElementById('pPrice').value = p.price;
   document.getElementById('pStock').value = p.stock;
@@ -1687,6 +1833,7 @@ function resetProductForm(prefillSku){
   document.getElementById('submitProductBtn').textContent = 'Simpan Produk';
   document.getElementById('cancelEditBtn').style.display = 'none';
   if(prefillSku) document.getElementById('pSku').value = prefillSku;
+  if(typeof stopBarcodeCamera === 'function') stopBarcodeCamera();
 }
 document.getElementById('cancelEditBtn').addEventListener('click', ()=>resetProductForm());
 
@@ -1819,7 +1966,7 @@ function renderHistory(){
 
   let list = state.transactions;
   if(dateFilter){
-    list = list.filter(t=>t.date.slice(0,10) === dateFilter);
+    list = list.filter(t=>toLocalISODate(t.date) === dateFilter);
   }
   if(statusFilter){
     if(statusFilter === 'lunas') list = list.filter(t=>!t.isDebt || t.debtRemaining <= 0);
@@ -2085,7 +2232,7 @@ function populateChartPickers(){
 }
 
 document.getElementById('chartDatePicker').addEventListener('change', (e)=>{
-  state.chartDate = e.target.value || new Date().toISOString().slice(0,10);
+  state.chartDate = e.target.value || toLocalISODate(new Date());
   renderChart();
 });
 document.getElementById('chartWeekPicker').addEventListener('change', (e)=>{
@@ -2118,10 +2265,11 @@ function renderChart(){
     salesData = new Array(24).fill(0);
     profitData = new Array(24).fill(0);
 
-    const targetDateStr = state.chartDate || new Date().toISOString().slice(0,10);
+    const targetDateStr = state.chartDate || toLocalISODate(new Date());
     state.transactions.forEach(t=>{
-      if(t.date.slice(0,10) === targetDateStr){
-        const hour = new Date(t.date).getHours();
+      const tDate = new Date(t.date);
+      if(toLocalISODate(tDate) === targetDateStr){
+        const hour = tDate.getHours();
         salesData[hour] += t.total;
         profitData[hour] += (t.profit||0);
       }
@@ -2206,6 +2354,7 @@ document.getElementById('exportExcelBtn').addEventListener('click', ()=>{
   const productsData = state.products.map(p => ({
     ID: p.id,
     SKU_Barcode: p.sku || '',
+    Kode_Barcode: p.barcode || '',
     Nama_Produk: p.name,
     Kategori: p.category || '',
     Harga_Beli: p.cost || 0,
@@ -2281,6 +2430,7 @@ document.getElementById('importExcelFile').addEventListener('change', (e)=>{
           state.products = importedProducts.map(p => ({
             id: p.ID || genId('MPS'),
             sku: String(p.SKU_Barcode || p.ID || genId('MPS')),
+            barcode: p.Kode_Barcode ? String(p.Kode_Barcode) : '',
             name: p.Nama_Produk || 'Produk Impor',
             category: p.Kategori || '',
             cost: parseFloat(p.Harga_Beli) || 0,
