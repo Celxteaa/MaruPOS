@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://*.supabase.co; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self';">
+<meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
 <title>MaruPOS — Kasir Digital</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -10,14 +13,14 @@
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0d6efd">
 <!-- External Libraries -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <!-- GANTI SCRIPT jsQR YANG LAMA DENGAN INI -->
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <!-- Library pembaca Barcode 1D (EAN/UPC/Code128/dll) untuk fitur Scan Barcode -->
-<script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
 <style>
   :root{
@@ -376,8 +379,8 @@
 <div id="licenseOverlay">
   <div class="license-card">
     <h2>Aktivasi MaruPOS</h2>
-    <p>Silakan masukkan Kode Lisensi Resmi untuk membuka akses aplikasi MaruPOS. Lisensi berlaku secara otomatis sampai masa berlaku habis.</p>
-    <textarea id="licenseInputKey" placeholder="Tempelkan Kunci Lisensi di sini..."></textarea>
+    <p>Silakan masukkan Kode Lisensi Resmi untuk membuka akses aplikasi MaruPOS. Aktivasi pertama memerlukan koneksi internet (verifikasi server); setelah aktif, aplikasi tetap bisa dipakai offline.</p>
+    <textarea id="licenseInputKey" placeholder="Masukkan Kode Lisensi (mis. MARU-XXXX-XXXX)..."></textarea>
     <button class="btn primary" id="btnActivateLicense" style="width:100%; padding:10px;">Verifikasi & Aktifkan Lisensi</button>
     <div class="license-status" id="licenseStatusMsg"></div>
   </div>
@@ -798,16 +801,72 @@
 
 <div id="printArea"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
-/* ===================== METODE CRYPTOGRAPHIC SIGNATURE LICENSE SYSTEM ===================== */
-const LICENSE_SECRET = "MY_SUPER_SECRET_KEY_POS_2026"; // Ganti dengan Kunci Rahasia Anda saat menjual
+/* ===================== LISENSI: VERIFIKASI VIA BACKEND SUPABASE (OFFLINE-CAPABLE) =====================
+   Arsitektur:
+   - Sumber kebenaran (source of truth) status lisensi ADA DI SERVER (tabel Postgres di Supabase),
+     diakses HANYA lewat Supabase Edge Function "verify-license". Client TIDAK PERNAH menyentuh
+     database langsung (RLS mengunci akses anon), dan TIDAK menyimpan kunci rahasia apa pun.
+   - Saat aktivasi (butuh internet), Edge Function mengecek kode lisensi ke database, mengikat ke
+     device_id perangkat ini, lalu MENANDATANGANI token menggunakan private key ECDSA P-256 yang
+     hanya ada di server (Supabase secret). Client menyimpan token tsb secara lokal.
+   - Setiap kali app dibuka (termasuk OFFLINE), token itu diverifikasi secara lokal memakai PUBLIC
+     KEY (aman untuk disebar, tidak bisa dipakai memalsukan lisensi) via Web Crypto — jadi aplikasi
+     tetap bisa dipakai tanpa internet sampai token kadaluarsa.
+   - Kalau perangkat online, dilakukan validasi ulang di background secara diam-diam untuk mendeteksi
+     pencabutan/refund lebih cepat; kalau gagal (mis. sedang offline), aplikasi tetap jalan normal
+     memakai token tersimpan sampai masa berlakunya habis.
+================================================================================================= */
 
-async function verifyLicenseSignature(licenseString) {
+// --- Konfigurasi proyek Supabase (anon key AMAN untuk ditaruh di client, ini bukan rahasia) ---
+const SUPABASE_URL = "https://lizgugpxynmsehpswcnt.supabase.co"; // GANTI dengan URL proyek Supabase Anda
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxpemd1Z3B4eW5tc2VocHN3Y250Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYwNzM1NTYsImV4cCI6MjEwMTY0OTU1Nn0.zy2gahtfJ7VgDfeEbuqRNl104DrbTPrlMH8jm1M92pA";          // GANTI dengan anon public key proyek Anda
+const LICENSE_VERIFY_ENDPOINT = `${SUPABASE_URL}/functions/v1/verify-license`;
+
+// --- Public key ECDSA P-256 (JWK) untuk verifikasi tanda tangan token SECARA OFFLINE ---
+// Ini adalah pasangan dari private key yang HANYA disimpan di Supabase Edge Function (secret),
+// jadi aman ditaruh di sini: dengan public key ini client cuma bisa MEMVERIFIKASI, bukan MEMBUAT lisensi.
+// Cara membuat pasangan key: lihat script keygen-license-key.mjs yang disertakan terpisah.
+const LICENSE_PUBLIC_KEY_JWK = {
+  "key_ops": [
+    "verify"
+  ],
+  "ext": true,
+  "kty": "EC",
+  "x": "4qN2ckP-2iYL7IqdD-BzLRSkkrxpw8pp9yFeB3_6yXo",
+  "y": "MY-M0hJP4XR9pakgRBlVSR_gB1p_D4QGJG0ZcGLBooI",
+  "crv": "P-256"
+};
+
+let _licensePublicKeyCache = null;
+async function getLicensePublicKey() {
+  if (_licensePublicKeyCache) return _licensePublicKeyCache;
+  _licensePublicKeyCache = await crypto.subtle.importKey(
+    "jwk", LICENSE_PUBLIC_KEY_JWK,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false, ["verify"]
+  );
+  return _licensePublicKeyCache;
+}
+
+// Device ID unik & persisten per perangkat/browser (untuk pembatasan jumlah aktivasi per lisensi)
+function getDeviceId() {
+  let id = localStorage.getItem('marupos_device_id');
+  if (!id) {
+    id = (crypto.randomUUID ? crypto.randomUUID() : 'dev-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+    localStorage.setItem('marupos_device_id', id);
+  }
+  return id;
+}
+
+// Verifikasi TOKEN (hasil tanda tangan server) secara LOKAL/OFFLINE — tidak perlu internet.
+// Format token: base64(payloadJSON) + "." + hex(signature ECDSA)
+async function verifyLicenseSignature(token) {
   try {
-    if (!licenseString || !licenseString.includes('.')) return false;
-    const parts = licenseString.split('.');
-    if (parts.length !== 2) return false;
+    if (!token || !token.includes('.')) return { valid: false, reason: "Format token lisensi tidak valid!" };
+    const parts = token.split('.');
+    if (parts.length !== 2) return { valid: false, reason: "Format token lisensi tidak valid!" };
 
     const [payloadB64, signatureHex] = parts;
     const payloadStr = atob(payloadB64);
@@ -816,36 +875,82 @@ async function verifyLicenseSignature(licenseString) {
     if (!payload.exp || Date.now() > payload.exp) {
       return { valid: false, reason: "Lisensi telah kadaluarsa!" };
     }
+    if (payload.device_id && payload.device_id !== getDeviceId()) {
+      return { valid: false, reason: "Token lisensi ini terikat ke perangkat lain!" };
+    }
 
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(LICENSE_SECRET);
-    const cryptoKey = await crypto.subtle.importKey(
-      "raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
-    );
-
-    const sigArray = new Uint8Array(signatureHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    const publicKey = await getLicensePublicKey();
+    const sigArray = new Uint8Array(signatureHex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
     const isValid = await crypto.subtle.verify(
-      "HMAC", cryptoKey, sigArray, encoder.encode(payloadStr)
+      { name: "ECDSA", hash: "SHA-256" }, publicKey, sigArray, new TextEncoder().encode(payloadStr)
     );
 
     if (isValid) {
-      return { valid: true, exp: payload.exp };
-    } else {
-      return { valid: false, reason: "Signature Lisensi tidak valid/palsu!" };
+      return { valid: true, exp: payload.exp, key: payload.key };
     }
+    return { valid: false, reason: "Signature Lisensi tidak valid/palsu!" };
   } catch (e) {
     return { valid: false, reason: "Format lisensi tidak valid!" };
   }
 }
 
+// Panggil backend Supabase (Edge Function khusus verifikasi lisensi) — butuh internet.
+// Mengembalikan token baru (bertanda tangan server) jika kode lisensi valid & aktif.
+async function verifyLicenseOnline(licenseKey) {
+  try {
+    const res = await fetch(LICENSE_VERIFY_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({ license_key: licenseKey, device_id: getDeviceId() })
+    });
+    const data = await res.json();
+    return data; // { valid, token?, exp?, reason? }
+  } catch (e) {
+    return { valid: false, offline: true, reason: "Tidak dapat menghubungi server verifikasi (cek koneksi internet)." };
+  }
+}
+
+// Revalidasi diam-diam ke server saat online, untuk mendeteksi pencabutan lisensi lebih cepat.
+// Kalau gagal (offline / server tak terjangkau), TIDAK mengganggu — app tetap pakai token lama.
+async function backgroundRevalidateLicense() {
+  try {
+    if (!navigator.onLine) return;
+    const rawKey = localStorage.getItem('marupos_license_raw_key');
+    if (!rawKey) return;
+    const result = await verifyLicenseOnline(rawKey);
+    if (result.valid && result.token) {
+      localStorage.setItem('marupos_license_key', result.token);
+    } else if (result.valid === false && !result.offline) {
+      // Server tegas bilang tidak valid lagi (dicabut/kadaluarsa/refund) -> kunci ulang aplikasi
+      localStorage.removeItem('marupos_license_key');
+      localStorage.removeItem('marupos_license_raw_key');
+      const overlay = document.getElementById('licenseOverlay');
+      if (overlay) overlay.style.display = 'flex';
+      const statusEl = document.getElementById('licenseStatusMsg');
+      if (statusEl) {
+        statusEl.className = 'license-status error';
+        statusEl.textContent = result.reason || 'Lisensi tidak lagi valid, silakan aktivasi ulang.';
+      }
+      await updateLicenseInfoInSettings();
+    }
+  } catch (e) {
+    // diam-diam abaikan, jangan ganggu penggunaan offline
+  }
+}
+
 async function checkLicenseOnLoad() {
   const overlay = document.getElementById('licenseOverlay');
-  const savedLicense = localStorage.getItem('marupos_license_key');
+  const savedToken = localStorage.getItem('marupos_license_key');
 
-  if (savedLicense) {
-    const res = await verifyLicenseSignature(savedLicense);
+  if (savedToken) {
+    const res = await verifyLicenseSignature(savedToken);
     if (res.valid) {
       overlay.style.display = 'none';
+      backgroundRevalidateLicense(); // cek ulang diam-diam di background bila online
       return;
     } else {
       localStorage.removeItem('marupos_license_key');
@@ -855,14 +960,14 @@ async function checkLicenseOnLoad() {
 }
 
 async function updateLicenseInfoInSettings() {
-  const savedLicense = localStorage.getItem('marupos_license_key');
+  const savedToken = localStorage.getItem('marupos_license_key');
   const statusEl = document.getElementById('licStatusText');
   const expEl = document.getElementById('licExpDate');
   const daysEl = document.getElementById('licDaysLeft');
 
   if (!statusEl || !expEl || !daysEl) return;
 
-  if (!savedLicense) {
+  if (!savedToken) {
     statusEl.textContent = 'Belum Teraktivasi';
     statusEl.style.color = 'var(--danger)';
     expEl.textContent = '-';
@@ -870,7 +975,7 @@ async function updateLicenseInfoInSettings() {
     return;
   }
 
-  const res = await verifyLicenseSignature(savedLicense);
+  const res = await verifyLicenseSignature(savedToken);
   if (res.valid && res.exp) {
     const expDate = new Date(res.exp);
     const now = new Date();
@@ -895,7 +1000,6 @@ document.getElementById('btnActivateLicense').addEventListener('click', async ()
   const inputKey = document.getElementById('licenseInputKey').value.trim();
   const statusEl = document.getElementById('licenseStatusMsg');
   statusEl.className = 'license-status';
-  statusEl.textContent = 'Memverifikasi signature...';
 
   if (!inputKey) {
     statusEl.className = 'license-status error';
@@ -903,9 +1007,12 @@ document.getElementById('btnActivateLicense').addEventListener('click', async ()
     return;
   }
 
-  const res = await verifyLicenseSignature(inputKey);
-  if (res.valid) {
-    localStorage.setItem('marupos_license_key', inputKey);
+  statusEl.textContent = 'Menghubungi server verifikasi lisensi...';
+  const res = await verifyLicenseOnline(inputKey);
+
+  if (res.valid && res.token) {
+    localStorage.setItem('marupos_license_key', res.token);
+    localStorage.setItem('marupos_license_raw_key', inputKey);
     statusEl.className = 'license-status success';
     statusEl.textContent = 'Aktivasi Berhasil! Membuka sistem...';
     await updateLicenseInfoInSettings();
@@ -914,7 +1021,7 @@ document.getElementById('btnActivateLicense').addEventListener('click', async ()
     }, 800);
   } else {
     statusEl.className = 'license-status error';
-    statusEl.textContent = res.reason || 'Kunci Lisensi Salah!';
+    statusEl.textContent = res.reason || 'Kunci Lisensi Salah atau server tidak terjangkau!';
   }
 });
 
@@ -1613,8 +1720,15 @@ function handleScanResult(raw){
     box.innerHTML = `
       <div class="notfound-card">
         <div>Produk tidak ditemukan. Kode: <b>${escapeHtml(code)}</b></div>
-        <button class="btn primary" style="margin-top:6px;" onclick="resetProductForm('${escapeHtml(code)}'); document.querySelector('[data-tab=produk]').click();">Daftarkan Produk</button>
+        <button type="button" class="btn primary regBtn" style="margin-top:6px;">Daftarkan Produk</button>
       </div>`;
+    const regBtn = box.querySelector('.regBtn');
+    if(regBtn){
+      regBtn.addEventListener('click', ()=>{
+        resetProductForm(code);
+        document.querySelector('[data-tab=produk]').click();
+      });
+    }
   }
 }
 
